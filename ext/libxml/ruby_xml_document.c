@@ -142,6 +142,75 @@ static VALUE rxml_document_initialize(int argc, VALUE *argv, VALUE self)
 
 /*
  * call-seq:
+ *    document.canonicalize(xpath, mode, inclusive_ns_prefixes, comments) -> String 
+ *
+ * 	Returns a string containing the canonicalized form of the document, or
+ * 	the subset specified by the xpath argument. 
+ * 	 
+ */
+static VALUE rxml_document_canonicalize(VALUE self, VALUE xpath_expr, VALUE mode, VALUE inclusive_ns_prefixes, VALUE comments) {
+	Check_Type(mode, T_FIXNUM);
+	Check_Type(comments, T_FIXNUM);
+
+	xmlDocPtr xdoc;
+	xmlXPathObjectPtr xpathObj;
+	xmlXPathContextPtr xpathCtx;
+	xmlChar *buffer = NULL;
+	xmlNodeSetPtr nodes_to_canonize = NULL;
+	xmlChar** prefixes = NULL;
+
+  	Data_Get_Struct(self, xmlDoc, xdoc);
+
+	if(TYPE(xpath_expr) == T_STRING) {
+		VALUE expression = rb_check_string_type(xpath_expr);	
+		xpathCtx = xmlXPathNewContext(xdoc);
+		xpathCtx->node = xmlDocGetRootElement(xdoc);
+		// Load document namespaces into the xpath context
+  		xmlNsPtr *xnsArr = xmlGetNsList(xdoc, xpathCtx->node);
+		if(xnsArr) {
+    		xmlNsPtr xns = *xnsArr;
+			while(xns) {
+				if (xns->prefix)
+					xmlXPathRegisterNs(xpathCtx, xns->prefix, xns->href);
+				xns = xns->next;
+			}
+			xmlFree(xnsArr);
+		}	
+		xpathObj = xmlXPathEval((xmlChar*) StringValueCStr(expression), xpathCtx);
+		if(xpathObj == NULL) {
+			rxml_raise(xmlGetLastError());
+		}
+		nodes_to_canonize = xpathObj->nodesetval;
+		if(nodes_to_canonize == NULL || nodes_to_canonize->nodeNr == 0) {
+			//xpath didn't match anything, do nothing
+			return Qnil;
+		}
+	}
+	if(!NIL_P(inclusive_ns_prefixes)) {
+		int i;
+		struct RArray *ns_prefixes_array;
+		ns_prefixes_array = RARRAY(inclusive_ns_prefixes);
+		prefixes = (xmlChar**)malloc(sizeof(xmlChar**) * RARRAY_LEN(ns_prefixes_array) + 1);
+		for(i = 0; i < RARRAY_LEN(ns_prefixes_array); i++) {
+			VALUE prefix = RARRAY_PTR(ns_prefixes_array)[i];
+			prefixes[i] = (xmlChar*)StringValueCStr(prefix);
+		}
+		prefixes[RARRAY_LEN(ns_prefixes_array)] = NULL;
+	}
+
+	int length = xmlC14NDocDumpMemory(xdoc,nodes_to_canonize,FIX2INT(mode),prefixes,FIX2INT(comments), &buffer);
+	free(prefixes);
+	VALUE result = rb_str_new((const char*)buffer, length);
+	if(nodes_to_canonize) {
+		xmlXPathFreeContext(xpathCtx);
+		xmlXPathFreeObject(xpathObj);
+	} xmlFree(buffer);
+	return result;
+}
+
+
+/*
+ * call-seq:
  *    document.compression -> num
  *
  * Obtain this document's compression mode identifier.
@@ -933,4 +1002,5 @@ void rxml_init_document(void)
   rb_define_method(cXMLDocument, "validate", rxml_document_validate_dtd, 1);
   rb_define_method(cXMLDocument, "validate_schema", rxml_document_validate_schema, 1);
   rb_define_method(cXMLDocument, "validate_relaxng", rxml_document_validate_relaxng, 1);
+  rb_define_method(cXMLDocument, "canonicalize", rxml_document_canonicalize, 4);
 }

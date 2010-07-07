@@ -1,0 +1,1 @@
+Add Victor Lin's canonicalize patch, and tweak it so it'll build on ruby 1.9.
